@@ -11,7 +11,7 @@
     <title>笛の熱量 — Road to 26</title>
     <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=finale-2" />
   </head>
   <body>
     <main class="story-shell">
@@ -55,9 +55,15 @@
           <span>STAGE</span>
           <strong id="venueName">SOUTH AMERICA / 10 MAIN VENUES</strong>
         </div>
+        <section id="finalePanel" class="finale-panel" hidden aria-label="10か国の推定総ファウル比較">
+          <div class="finale-ranking-head"><span>HIGH</span><span>EST. FOULS / 18 MATCHES</span></div>
+          <div id="finaleRanking" class="finale-ranking"></div>
+          <div class="finale-range"><span>MIN <b>193</b></span><span>RANGE <b>61</b></span><span>MAX <b>254</b></span></div>
+          <p>高さと色は国別の推定総ファウル。地形標高ではなく、視認のために高さを誇張しています。</p>
+        </section>
         <div id="statGrid" class="stat-grid" aria-label="シーンの統計"></div>
         <div id="foulScale" class="foul-scale" hidden>
-          <div class="foul-scale-labels"><span>LOW · 193</span><span>254 · HIGH</span></div>
+          <div class="foul-scale-labels"><span>0 FOULS</span><span>254 · MAX</span></div>
           <div class="foul-scale-plot">
             <b id="foulScaleValue" class="foul-scale-value">≈193</b>
             <div class="foul-scale-track"><span id="foulScaleBar"></span></div>
@@ -69,13 +75,12 @@
           <span id="confidenceBadge">10 TEAMS</span>
           <span id="sceneNote">全18節・全代表18試合</span>
         </div>
+        <div id="foulLegend" class="foul-legend" hidden aria-label="ファウル表現の凡例">
+          <strong>凡例</strong>
+          <span><i class="foul-legend-bar" aria-hidden="true"></i>棒グラフ・3D柱：推定総ファウル</span>
+          <span><i class="foul-legend-gradient" aria-hidden="true"></i>少 → 多</span>
+        </div>
       </aside>
-
-      <section class="legend" aria-label="3D統計柱の凡例">
-        <p>FOULS / STADIUM STAGE</p>
-        <div><span style="--legend:#f2f1e8"></span>推定総ファウル</div>
-        <div class="legend-gradient"><i></i>少 → 多</div>
-      </section>
 
       <aside id="disciplinePanel" class="discipline-panel" aria-hidden="true" aria-live="polite"></aside>
 
@@ -126,6 +131,6 @@
     </main>
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
     <script src="./assets/conmebol-countries.js"></script>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=finale-2"></script>
   </body>
 </html>

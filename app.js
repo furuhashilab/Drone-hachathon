@@ -82,6 +82,28 @@ const teams = [
 ];
 
 const focusTeams = [...teams].sort((a, b) => a.fouls - b.fouls || a.team.localeCompare(b.team));
+const finaleTeams = [...teams].sort((a, b) => b.fouls - a.fouls || a.team.localeCompare(b.team));
+const FOUL_SCALE_MAX = Math.max(...focusTeams.map(team => team.fouls));
+const FOUL_COLUMN_METERS_PER_FOUL = 0.9;
+const FINALE_RELIEF_MAX_HEIGHT = 420000;
+const FINALE_LABEL_COORDS = {
+  argentina: [-64.2, -38.2],
+  bolivia: [-64.6, -16.9],
+  brazil: [-51.2, -10.2],
+  chile: [-72.3, -28.4],
+  colombia: [-75.2, 4],
+  ecuador: [-79.4, -1.4],
+  paraguay: [-58.5, -23.2],
+  peru: [-75.6, -9.8],
+  uruguay: [-55.8, -33.1],
+  venezuela: [-63.5, 8.3]
+};
+const FINALE_HIDDEN_LAYER_IDS = [
+  "qualifying-route-glow", "qualifying-route-dash",
+  "stadium-pitch-fill", "stadium-pitch-line",
+  "stadium-bowls", "active-stadium-bowls",
+  "data-pulse-columns", "active-pulse-columns"
+];
 
 const foulStoryCopy = {
   argentina: {
@@ -168,21 +190,22 @@ const scenes = [
   })),
   {
     tag: "FINALE",
-    title: "61回の幅を、旅した。",
-    lead: "193回から254回まで。少ない順に並べると、大陸の接触量に勾配が現れる。",
-    body: "この差は国民性や情熱の順位ではなく、審判が記録したファウルの発生量です。カードや退場は別の軸としてポップアップに残し、単一のランキングへ混在させていません。",
-    venue: "SOUTH AMERICA / 22 QUALIFIER VENUES",
+    title: "南米で最も多かったのは、コロンビア。",
+    lead: "推定254回。10か国を多い順に並べ、場所と数値を一枚で振り返る。",
+    body: "最少のアルゼンチン193回から、最多のコロンビア254回まで。高さと色は各国18試合の推定総ファウルを表す。",
+    venue: "SOUTH AMERICA / 10 TEAMS",
     stats: overviewStats,
-    badge: "12 SCENES",
+    badge: "FINALE",
     note: "次のループで、物語は再び南米へ",
-    camera: { center: [-63.5, -20], zoom: 3.05, pitch: 52, bearing: 14 }
+    finale: true,
+    camera: { center: [-60.5, -23], zoom: 3.28, pitch: 54, bearing: 12 }
   }
 ];
 
-const SCENE_DURATION = 22000;
+const SCENE_DURATION = 15000;
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let currentScene = 0;
-let isPlaying = !prefersReducedMotion;
+let isPlaying = true;
 let elapsed = 0;
 let previousFrame = performance.now();
 let popupTimer = null;
@@ -190,6 +213,7 @@ let storyPopup = null;
 let markers = [];
 let mapReady = false;
 let cameraTimers = [];
+let finaleBaseLabelLayers = [];
 
 const els = {
   card: document.querySelector(".story-card"),
@@ -204,6 +228,9 @@ const els = {
   foulScaleBar: document.querySelector("#foulScaleBar"),
   foulScaleValue: document.querySelector("#foulScaleValue"),
   foulRank: document.querySelector("#foulRank"),
+  foulLegend: document.querySelector("#foulLegend"),
+  finalePanel: document.querySelector("#finalePanel"),
+  finaleRanking: document.querySelector("#finaleRanking"),
   badge: document.querySelector("#confidenceBadge"),
   note: document.querySelector("#sceneNote"),
   timelineLabel: document.querySelector("#timelineLabel"),
@@ -225,7 +252,6 @@ const els = {
   countryIntroNameJa: document.querySelector("#countryIntroNameJa"),
   countryIntroMeta: document.querySelector("#countryIntroMeta"),
   disciplinePanel: document.querySelector("#disciplinePanel"),
-  legend: document.querySelector(".legend"),
   loading: document.querySelector("#loadingScreen")
 };
 
@@ -253,6 +279,61 @@ function squarePolygon(center, xOffset, yOffset, size) {
     [cx + size, cy + size], [cx - size, cy + size],
     [cx - size, cy - size]
   ]];
+}
+
+function finaleReliefHeightExpression() {
+  return ["*", ["/", ["get", "fouls"], FOUL_SCALE_MAX], FINALE_RELIEF_MAX_HEIGHT];
+}
+
+function foulColorExpression() {
+  return ["interpolate", ["linear"], ["get", "fouls"], 193, "#f2f1e8", 224, "#ffd84d", 254, "#ff4f45"];
+}
+
+function interpolateFoulColor(value) {
+  const stops = [
+    { value: 193, color: [242, 241, 232] },
+    { value: 224, color: [255, 216, 77] },
+    { value: 254, color: [255, 79, 69] }
+  ];
+  const upperIndex = value <= stops[1].value ? 1 : 2;
+  const lower = stops[upperIndex - 1];
+  const upper = stops[upperIndex];
+  const ratio = Math.max(0, Math.min(1, (value - lower.value) / (upper.value - lower.value)));
+  const color = lower.color.map((channel, index) => Math.round(channel + (upper.color[index] - channel) * ratio));
+  return `rgb(${color.join(", ")})`;
+}
+
+function makeFinaleCountriesGeoJSON() {
+  const teamById = new Map(teams.map(team => [team.id, team]));
+  return {
+    type: "FeatureCollection",
+    features: window.CONMEBOL_COUNTRIES.features.map(feature => {
+      const team = teamById.get(feature.properties.team);
+      return {
+        ...feature,
+        properties: {
+          ...feature.properties,
+          fouls: team?.fouls ?? 0
+        }
+      };
+    })
+  };
+}
+
+function makeFinaleLabelsGeoJSON() {
+  return {
+    type: "FeatureCollection",
+    features: teams.map(team => ({
+      type: "Feature",
+      properties: {
+        team: team.id,
+        label: `${team.team.toUpperCase()}\n≈${team.fouls}`,
+        fouls: team.fouls,
+        topThree: finaleTeams.indexOf(team) < 3 ? 1 : 0
+      },
+      geometry: { type: "Point", coordinates: FINALE_LABEL_COORDS[team.id] }
+    }))
+  };
 }
 
 function pointFromMeters(center, east, north) {
@@ -328,7 +409,7 @@ function makePulseGeoJSON() {
         team: team.id,
         metric: "fouls",
         fouls: team.fouls,
-        height: Math.round(80 + (team.fouls - 193) * 3.8)
+        height: Math.round(team.fouls * FOUL_COLUMN_METERS_PER_FOUL)
       },
       geometry: { type: "Polygon", coordinates: squarePolygon(team.coords, 0.0025, 0, 0.00054) }
     }))
@@ -357,6 +438,9 @@ function addBuildingLayer() {
 
 function addStoryLayers() {
   const firstLabel = map.getStyle().layers.find(layer => layer.type === "symbol" && layer.layout?.["text-field"]);
+  finaleBaseLabelLayers = map.getStyle().layers
+    .filter(layer => layer.type === "symbol")
+    .map(layer => ({ id: layer.id, visibility: layer.layout?.visibility ?? "visible" }));
   const routeCoordinates = focusTeams.map(team => team.coords);
 
   map.addSource("satellite-imagery", {
@@ -380,8 +464,50 @@ function addStoryLayers() {
 
   map.addSource("country-boundaries", {
     type: "geojson",
-    data: window.CONMEBOL_COUNTRIES
+    data: makeFinaleCountriesGeoJSON()
   });
+  map.addLayer({
+    id: "finale-country-relief",
+    type: "fill-extrusion",
+    source: "country-boundaries",
+    filter: ["==", ["get", "team"], "__none__"],
+    paint: {
+      "fill-extrusion-color": foulColorExpression(),
+      "fill-extrusion-height": 0,
+      "fill-extrusion-base": 0,
+      "fill-extrusion-opacity": 0,
+      "fill-extrusion-vertical-gradient": true,
+      "fill-extrusion-height-transition": { duration: 1500, delay: 0 },
+      "fill-extrusion-opacity-transition": { duration: 700, delay: 0 }
+    }
+  }, firstLabel?.id);
+  map.addSource("finale-country-label-points", {
+    type: "geojson",
+    data: makeFinaleLabelsGeoJSON()
+  });
+  map.addLayer({
+    id: "finale-country-labels",
+    type: "symbol",
+    source: "finale-country-label-points",
+    filter: ["==", ["get", "team"], "__none__"],
+    layout: {
+      "text-field": ["get", "label"],
+      ...(firstLabel?.layout?.["text-font"] ? { "text-font": firstLabel.layout["text-font"] } : {}),
+      "text-size": ["case", ["==", ["get", "topThree"], 1], 13, 10],
+      "text-line-height": 1.05,
+      "text-letter-spacing": 0.08,
+      "text-anchor": "center",
+      "text-allow-overlap": true,
+      "text-ignore-placement": true
+    },
+    paint: {
+      "text-color": ["case", ["==", ["get", "topThree"], 1], "#fff08a", "#f2f1e8"],
+      "text-halo-color": "rgba(5, 8, 14, 0.94)",
+      "text-halo-width": 2,
+      "text-halo-blur": 0.8,
+      "text-opacity": 0
+    }
+  }, firstLabel?.id);
   map.addLayer({
     id: "active-country-fill",
     type: "fill",
@@ -537,12 +663,10 @@ function showPopup(team) {
   els.disciplinePanel.innerHTML = popupHtml(team);
   els.disciplinePanel.classList.add("is-visible");
   els.disciplinePanel.setAttribute("aria-hidden", "false");
-  els.legend.classList.add("is-suppressed");
   storyPopup = {
     remove() {
       els.disciplinePanel.classList.remove("is-visible");
       els.disciplinePanel.setAttribute("aria-hidden", "true");
-      els.legend.classList.remove("is-suppressed");
       storyPopup = null;
     }
   };
@@ -553,6 +677,20 @@ function updatePlayButton() {
   els.play.setAttribute("aria-label", isPlaying ? "一時停止" : "再生");
   els.play.innerHTML = `<span class="${isPlaying ? "pause-icon" : "play-icon"}" aria-hidden="true"></span>`;
   document.querySelector(".topbar-meta > span").lastChild.textContent = isPlaying ? " AUTOPILOT" : " PAUSED";
+}
+
+function renderFinaleRanking() {
+  els.finaleRanking.innerHTML = finaleTeams.map((team, index) => {
+    const width = (team.fouls / FOUL_SCALE_MAX) * 100;
+    const color = interpolateFoulColor(team.fouls);
+    return `<div class="finale-rank-row${index < 3 ? " is-top-three" : ""}" style="--rank-delay:${index * 55}ms">
+      <span class="finale-rank-country">${team.team}</span>
+      <span class="finale-rank-track"><i style="width:${width}%;--rank-color:${color}"></i></span>
+      <strong>${team.fouls}</strong>
+    </div>`;
+  }).join("");
+  els.finalePanel.classList.remove("is-visible");
+  requestAnimationFrame(() => els.finalePanel.classList.add("is-visible"));
 }
 
 function updateStory(scene, index) {
@@ -567,14 +705,21 @@ function updateStory(scene, index) {
   els.timelineLabel.textContent = `${String(index + 1).padStart(2, "0")} — ${scene.tag.split("·")[0].trim()}`;
   els.stats.innerHTML = scene.stats.map(stat => `<div class="stat"><strong>${stat.value}</strong><small>${stat.label}</small></div>`).join("");
   const isCountryFocus = Boolean(scene.team);
+  const isFinale = Boolean(scene.finale);
+  els.card.classList.toggle("is-finale", isFinale);
+  els.stats.hidden = isFinale;
+  els.finalePanel.hidden = !isFinale;
+  if (isFinale) renderFinaleRanking();
+  else els.finalePanel.classList.remove("is-visible");
   els.stats.classList.toggle("is-foul-only", isCountryFocus);
   els.foulScale.hidden = !isCountryFocus;
+  els.foulLegend.hidden = !isCountryFocus;
   if (isCountryFocus) {
     const rank = focusTeams.indexOf(scene.team) + 1;
-    const rangePosition = 10 + ((scene.team.fouls - 193) / (254 - 193)) * 90;
-    els.foulScaleBar.style.width = `${rangePosition}%`;
+    const proportionalPosition = (scene.team.fouls / FOUL_SCALE_MAX) * 100;
+    els.foulScaleBar.style.width = `${proportionalPosition}%`;
     els.foulScaleValue.textContent = `≈${scene.team.fouls}`;
-    els.foulScaleValue.style.left = `${Math.min(92, Math.max(10, rangePosition))}%`;
+    els.foulScaleValue.style.left = `${Math.min(95, Math.max(5, proportionalPosition))}%`;
     els.foulRank.textContent = `RANK ${rank} / 10`;
   } else {
     els.foulScaleBar.style.width = "0%";
@@ -584,13 +729,12 @@ function updateStory(scene, index) {
 }
 
 function setStoryRevealPhase(phase, scene) {
-  els.card.classList.remove("phase-graph", "phase-support", "phase-background");
+  els.card.classList.remove("phase-hidden", "phase-graph", "phase-support", "phase-background");
   els.card.classList.add(`phase-${phase}`);
   if (!scene.team) return;
   const phaseLabels = {
-    graph: "02 · FOUL GRAPH",
-    support: "03 · DISCIPLINE",
-    background: "04 · CONTEXT"
+    hidden: "APPROACHING",
+    background: "02 · FOUL CONTEXT"
   };
   els.sceneTag.textContent = phaseLabels[phase];
 }
@@ -677,9 +821,9 @@ function runCountryCameraSequence(scene, fromUser) {
     curve: 1.25
   });
 
-  scheduleCameraStep(() => revealCountryName(team), prefersReducedMotion ? 600 : 3000);
+  scheduleCameraStep(() => revealCountryName(team), prefersReducedMotion ? 400 : 1800);
 
-  const overviewHold = prefersReducedMotion ? 1200 : 6200;
+  const overviewHold = prefersReducedMotion ? 900 : 4200;
   scheduleCameraStep(() => {
     els.countryIntroStep.textContent = `APPROACHING · ${team.city.toUpperCase()}`;
     els.countryIntro.classList.add("is-departing");
@@ -696,7 +840,7 @@ function runCountryCameraSequence(scene, fromUser) {
     });
   }, overviewHold);
 
-  const finalApproach = prefersReducedMotion ? 1700 : 8500;
+  const finalApproach = prefersReducedMotion ? 1300 : 5900;
   scheduleCameraStep(() => {
     els.countryIntroStep.textContent = `FINAL APPROACH · ${team.stadium.toUpperCase()}`;
     map.flyTo({
@@ -710,17 +854,45 @@ function runCountryCameraSequence(scene, fromUser) {
 
   scheduleCameraStep(() => {
     hideCountryIntro();
-    setStoryRevealPhase("graph", scene);
-  }, prefersReducedMotion ? 1600 : 7200);
+    setStoryRevealPhase("background", scene);
+  }, prefersReducedMotion ? 1700 : 7000);
 
   popupTimer = scheduleCameraStep(() => {
-    setStoryRevealPhase("support", scene);
     showPopup(team);
-  }, prefersReducedMotion ? 3000 : 12800);
+  }, prefersReducedMotion ? 2400 : 9000);
+}
 
+function setFinaleMapMode(active) {
+  if (!mapReady) return;
+  FINALE_HIDDEN_LAYER_IDS.forEach(layerId => {
+    if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", active ? "none" : "visible");
+  });
+  markers.forEach(item => item.element.classList.toggle("is-finale-hidden", active));
+  finaleBaseLabelLayers.forEach(layer => {
+    if (map.getLayer(layer.id)) map.setLayoutProperty(layer.id, "visibility", active ? "none" : layer.visibility);
+  });
+
+  if (!active) {
+    map.setPaintProperty("finale-country-relief", "fill-extrusion-height", 0);
+    map.setPaintProperty("finale-country-relief", "fill-extrusion-opacity", 0);
+    map.setPaintProperty("finale-country-labels", "text-opacity", 0);
+    map.setFilter("finale-country-relief", ["==", ["get", "team"], "__none__"]);
+    map.setFilter("finale-country-labels", ["==", ["get", "team"], "__none__"]);
+    return;
+  }
+
+  map.setFilter("finale-country-relief", ["has", "fouls"]);
+  map.setFilter("finale-country-labels", ["has", "team"]);
+  map.setPaintProperty("finale-country-relief", "fill-extrusion-height", 0);
+  map.setPaintProperty("finale-country-relief", "fill-extrusion-opacity", 0);
+  map.setPaintProperty("finale-country-labels", "text-opacity", 0);
   scheduleCameraStep(() => {
-    setStoryRevealPhase("background", scene);
-  }, prefersReducedMotion ? 4000 : 16800);
+    map.setPaintProperty("finale-country-relief", "fill-extrusion-height", finaleReliefHeightExpression());
+    map.setPaintProperty("finale-country-relief", "fill-extrusion-opacity", 0.84);
+  }, prefersReducedMotion ? 0 : 450);
+  scheduleCameraStep(() => {
+    map.setPaintProperty("finale-country-labels", "text-opacity", 0.98);
+  }, prefersReducedMotion ? 0 : 1250);
 }
 
 function goToScene(index, fromUser = false) {
@@ -731,7 +903,7 @@ function goToScene(index, fromUser = false) {
   clearTimeout(popupTimer);
   storyPopup?.remove();
   const scene = scenes[currentScene];
-  setStoryRevealPhase(scene.team ? "graph" : "background", scene);
+  setStoryRevealPhase(scene.team ? "hidden" : "background", scene);
 
   els.card.classList.add("is-changing");
   window.setTimeout(() => {
@@ -740,17 +912,23 @@ function goToScene(index, fromUser = false) {
   }, 260);
 
   if (mapReady) {
+    setFinaleMapMode(Boolean(scene.finale));
     map.setFilter("active-pulse-columns", ["==", ["get", "team"], scene.team?.id ?? "__none__"]);
     map.setFilter("active-stadium-bowls", ["==", ["get", "team"], scene.team?.id ?? "__none__"]);
     markers.forEach(item => item.element.classList.toggle("is-active", item.team === scene.team));
     if (scene.team) {
       runCountryCameraSequence(scene, fromUser);
     } else {
+      const overviewCamera = scene.finale && window.innerWidth <= 760
+        ? { ...scene.camera, center: [-63, -20], zoom: 2.35, pitch: 47, bearing: 8 }
+        : scene.camera;
       map.flyTo({
-        ...scene.camera,
+        ...overviewCamera,
         duration: prefersReducedMotion ? 0 : (fromUser ? 3300 : 4800),
         essential: true,
-        padding: window.innerWidth > 760 ? { left: 300, right: 20, top: 30, bottom: 20 } : { left: 0, right: 0, top: 0, bottom: 200 },
+        padding: scene.finale
+          ? (window.innerWidth > 760 ? { left: 520, right: 20, top: 70, bottom: 30 } : { left: 0, right: 0, top: 20, bottom: 330 })
+          : (window.innerWidth > 760 ? { left: 300, right: 20, top: 30, bottom: 20 } : { left: 0, right: 0, top: 0, bottom: 200 }),
         curve: 1.35
       });
     }
